@@ -165,53 +165,45 @@ class PoolBrowser:
     async def is_logged_in(self, page: Page) -> bool:
         """Check whether the user is logged in with a premium/enterprise account.
 
-        Detection strategy (confirmed via live DOM analysis):
-        1. URL check: accounts.google.com → not logged in
-        2. Body class: "zero-state-theme" → not logged in (free/anonymous landing)
-        3. Sign-in button visible → not logged in
-        4. Google account link present → basic login detected
-        5. Enterprise indicators → premium/enterprise login confirmed
+        Detection strategy (positive-only, most reliable first):
+        1. URL guard: must be on gemini.google.com
+        2. Enterprise indicator (logo container or enterprise class on rich-textarea)
+        3. Google account avatar link (aria-label contains "Google-Konto:" or "Google Account:")
+        4. Fallback: rich-textarea present (only rendered when app is fully loaded with session)
 
         Returns False during page navigations (safe for polling).
         """
         try:
             current_url = page.url
-            # Gemini redirects to accounts.google.com if not logged in
-            if "accounts.google.com" in current_url:
-                return False
-            if "gemini.google.com" not in current_url and "consent.google.com" not in current_url:
+            if "gemini.google.com" not in current_url:
                 return False
 
-            # Check body class for zero-state-theme (free/anonymous landing page)
-            has_zero_state = await page.evaluate(
-                "document.body.classList.contains('zero-state-theme')"
-            )
-            if has_zero_state:
-                return False
+            # Strongest signal: enterprise indicator in the top bar
+            enterprise = await page.query_selector(ENTERPRISE_INDICATORS)
+            if enterprise:
+                logger.debug("is_logged_in: enterprise indicator found → True")
+                return True
 
-            # Check for explicit not-logged-in indicators
-            not_logged = await page.query_selector(NOT_LOGGED_IN_INDICATORS)
-            if not_logged:
-                is_visible = await not_logged.is_visible()
-                if is_visible:
-                    return False
-
-            # Positive confirmation: Google account avatar link
+            # Google account avatar link
             account_link = await page.query_selector(
                 'a[aria-label*="Google-Konto:"], '
                 'a[aria-label*="Google Account:"]'
             )
             if account_link:
+                logger.debug("is_logged_in: account avatar link found → True")
                 return True
 
-            # Fallback: check for rich-textarea (only present when logged in
+            # Fallback: rich-textarea (only present when logged in
             # and the app is fully loaded)
             textarea = await page.query_selector("rich-textarea")
             if textarea:
+                logger.debug("is_logged_in: rich-textarea found → True")
                 return True
 
+            logger.debug("is_logged_in: no positive indicator found → False")
             return False
-        except Exception:
+        except Exception as exc:
+            logger.debug("is_logged_in: exception: %s", exc)
             return False
 
     async def is_enterprise(self, page: Page) -> bool:
@@ -243,12 +235,44 @@ class PoolBrowser:
         This method polls is_logged_in() until it returns True.
         """
         elapsed_ms = 0
+        _reloaded = False
         while elapsed_ms < LOGIN_TIMEOUT_MS:
             try:
+                current_url = "<unknown>"
+                try:
+                    current_url = page.url
+                except Exception:
+                    pass
+                logger.debug(
+                    "Login poll: elapsed=%ds, page_closed=%s, url=%s",
+                    elapsed_ms // 1000, page.is_closed(), current_url,
+                )
+                if page.is_closed():
+                    logger.error("Login page was closed during login flow!")
+                    return False
+
+                # After returning from accounts.google.com, Gemini's SPA may
+                # not refresh its body classes. Force a reload once to pick up
+                # the new session state.
+                if (
+                    "gemini.google.com" in current_url
+                    and elapsed_ms > 0
+                    and not _reloaded
+                ):
+                    has_zero = await page.evaluate(
+                        "document.body.classList.contains('zero-state-theme')"
+                    )
+                    if has_zero:
+                        logger.info("Back on gemini.google.com with zero-state — reloading page")
+                        await page.reload(wait_until="commit")
+                        await page.wait_for_timeout(3000)
+                        _reloaded = True
+
                 if await self.is_logged_in(page):
                     return True
                 await page.wait_for_timeout(LOGIN_POLL_INTERVAL_MS)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Login poll exception: %s", exc)
                 await asyncio.sleep(LOGIN_POLL_INTERVAL_MS / 1000)
             elapsed_ms += LOGIN_POLL_INTERVAL_MS
         return False
@@ -448,7 +472,8 @@ class PoolBrowser:
             current_model = (await model_btn.inner_text()).strip()
             logger.info("Current model: '%s', preferred: '%s'", current_model, preferred)
 
-            if preferred.lower() in current_model.lower():
+            current_first_line = current_model.split("\n")[0].strip()
+            if preferred.lower() == current_first_line.lower() or f" {preferred.lower()}" in f" {current_first_line.lower()}":
                 logger.info("Model already set to '%s', no switch needed.", preferred)
                 return
 
@@ -468,10 +493,13 @@ class PoolBrowser:
             clicked = False
             for item in menu_items:
                 item_text = (await item.inner_text()).strip()
-                if preferred.lower() in item_text.lower():
+                # Use first line only (menu items have multi-line descriptions)
+                first_line = item_text.split("\n")[0].strip()
+                # Match as whole word to avoid "Pro" matching "Probleme"
+                if preferred.lower() == first_line.lower() or f" {preferred.lower()}" in f" {first_line.lower()}":
                     await item.click()
                     clicked = True
-                    logger.info("Switched model to '%s' (matched: '%s')", preferred, item_text)
+                    logger.info("Switched model to '%s' (matched: '%s')", preferred, first_line)
                     break
 
             if not clicked:

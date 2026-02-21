@@ -177,7 +177,11 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "Please log in manually (Google SSO: Email → Password → 2FA)..."
         )
-        login_ok = await browser.wait_for_login(first_page)
+        try:
+            login_ok = await browser.wait_for_login(first_page)
+        except Exception as exc:
+            logger.error("wait_for_login crashed: %s", exc, exc_info=True)
+            login_ok = False
         if not login_ok:
             logger.error(
                 "Login not detected within timeout. "
