@@ -13,6 +13,7 @@ import logging
 import os
 import signal
 import sys
+import tempfile
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -325,9 +326,12 @@ async def send_message(
     Blocks until Gemini responds (up to configured timeout).
 
     File handling:
-      - merge_paths: text files are read, merged, and embedded in the message
+      - merge_paths: text files are merged into one temp file and uploaded
       - file_paths: binary files are uploaded individually via browser
+      - Files are uploaded first, then the message is sent
     """
+    merged_temp_path: str | None = None
+
     try:
         # Validate all file paths exist
         all_paths = body.merge_paths + body.file_paths
@@ -338,20 +342,22 @@ async def send_message(
                     detail=f"File not found: {file_path}",
                 )
 
-        # Build the final message: merge text files into the prompt
-        message = body.message
-        if body.merge_paths:
-            merged_content = _merge_text_content(body.merge_paths)
-            message = f"{merged_content}\n\n{body.message}"
+        # Build the list of files to upload
+        upload_paths: list[str] = []
 
-        # Binary files are uploaded individually via browser
-        upload_paths = body.file_paths if body.file_paths else None
+        # Merge text files into one temp file for upload
+        if body.merge_paths:
+            merged_temp_path = _merge_text_files(body.merge_paths)
+            upload_paths.append(merged_temp_path)
+
+        # Add individual binary files
+        upload_paths.extend(body.file_paths)
 
         response_text, response_format, duration_ms = await pool.send(
             slot_id,
             x_lease_token,
-            message,
-            upload_paths,
+            body.message,
+            upload_paths if upload_paths else None,
         )
         return {
             "response": response_text,
@@ -367,6 +373,12 @@ async def send_message(
     except Exception as exc:
         logger.error("Send failed on slot %d: %s", slot_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Browser error: {exc}")
+    finally:
+        if merged_temp_path:
+            try:
+                Path(merged_temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 @app.post("/api/session/{slot_id}/release")
@@ -467,17 +479,18 @@ async def test_ui():
 # File merge helper
 # ---------------------------------------------------------------------------
 
-def _merge_text_content(paths: list[str]) -> str:
-    """Read and concatenate text files into a single string.
+def _merge_text_files(paths: list[str]) -> str:
+    """Read and concatenate text files into a single temp file for upload.
 
     Each file's content is preceded by a header line with the filename.
-    The result is embedded directly into the message sent to Gemini.
+    The temp file is uploaded to Gemini via the browser and must be
+    cleaned up by the caller afterwards.
 
     Args:
         paths: List of absolute file paths to merge.
 
     Returns:
-        Merged text content with file headers.
+        Absolute path to the merged temp file.
 
     Raises:
         HTTPException: If a file cannot be read.
@@ -504,8 +517,17 @@ def _merge_text_content(paths: list[str]) -> str:
         parts.append(f"=== {path_obj.name} ===\n{content}")
 
     merged_content = "\n\n".join(parts)
-    logger.info("Merged %d files into message (%d chars)", len(paths), len(merged_content))
-    return merged_content
+
+    fd, temp_path = tempfile.mkstemp(suffix=".md", prefix="merged_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(merged_content)
+    except Exception:
+        os.close(fd)
+        raise
+
+    logger.info("Merged %d files into %s (%d chars)", len(paths), temp_path, len(merged_content))
+    return temp_path
 
 
 # ---------------------------------------------------------------------------
