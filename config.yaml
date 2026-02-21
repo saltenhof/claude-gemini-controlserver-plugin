@@ -1,0 +1,31 @@
+# gemini-session-pool config
+
+server:
+  host: "127.0.0.1"
+  port: 9200
+
+pool:
+  size: 4                          # Number of parallel slots (tabs)
+  inactivity_timeout_s: 300        # Auto-release after inactivity (5 min)
+  max_queue_depth: 10              # Max queued acquire requests
+
+browser:
+  headless: false                  # true = invisible, false = Chrome window visible
+  chrome_profile_dir: "~/.gemini-session-pool/user_data"
+  navigation_timeout_ms: 30000
+  navigation_retries: 3
+  response_timeout_ms: 2400000     # 40 min max for Gemini response
+  gem_url: "https://gemini.google.com/gem/27117b3dc0da"  # claude-code-sparring Gem
+  preferred_model: "Pro"           # Auto-switch from Fast to Pro on each new session
+  max_files_per_turn: 9            # Max file uploads per single send
+
+health:
+  check_interval_s: 60             # Slot health check interval
+  inactivity_check_interval_s: 30  # Inactivity timeout check interval
+
+logging:
+  dir: "./logs"
+  level: "INFO"                    # Normal operation
+  error_level: "DEBUG"             # Error cases
+  max_file_size_mb: 50
+  backup_count: 5

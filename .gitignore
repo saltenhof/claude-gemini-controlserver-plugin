@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+
+logs/
+user_data/
+
+*.png
+
+.env
+.venv/
+venv/
