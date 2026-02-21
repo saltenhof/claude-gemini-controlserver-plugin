@@ -112,12 +112,10 @@ SELECTORS = {
         'button[aria-label="Copy"]',
     ],
     # File upload — two-step process:
-    # Step 1: Click the "add" button at the bottom to open the flyout menu.
+    # Step 1: Click the upload button at the bottom to open the flyout menu.
     "add_button": [
-        'button.add-button',
-        'button[data-test-id="add-button"]',
-        'button[aria-label="Weitere Optionen"]',
-        'button[aria-label="More options"]',
+        '[aria-controls="upload-file-menu"]',
+        'div.file-uploader button',
     ],
     # Step 2: In the flyout, click the local file uploader to trigger file dialog.
     "file_upload_button": [
