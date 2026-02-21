@@ -23,7 +23,7 @@ from playwright.async_api import Page
 
 from clipboard import extract_response_via_clipboard
 from config import BrowserConfig
-from gemini_selectors import MODEL_RESPONSE, find_element
+from gemini_selectors import MODEL_RESPONSE, STOP_BUTTON_ALL, find_element
 
 logger = logging.getLogger(__name__)
 
@@ -269,19 +269,39 @@ class Slot:
         await page.keyboard.press("Enter")
         await page.wait_for_timeout(1000)
 
-        # Verify: if send button is still visible, the Enter key didn't work.
-        # Click it explicitly as fallback.
+        # Verify the message was actually sent by checking if the editor is
+        # now empty (Gemini clears the editor after sending).
+        editor_text = ""
         try:
-            send_btn = await page.query_selector(
-                'button.send-button, '
-                'button[aria-label="Nachricht senden"], '
-                'button[aria-label="Send message"]'
-            )
-            if send_btn and await send_btn.is_visible():
-                await send_btn.click(force=True)
-                logger.debug("Slot %d: used send button fallback", self._slot_id)
+            editor_text = _normalize_text(await textarea.inner_text())
         except Exception:
             pass
+
+        if editor_text:
+            # Editor still has content — Enter didn't send. Try clicking send
+            # button, but ONLY if it's truly the send button (not the stop button).
+            logger.warning(
+                "Slot %d: editor not empty after Enter, trying send button", self._slot_id
+            )
+            try:
+                send_btn = await find_element(page, "send_button")
+                if send_btn and await send_btn.is_visible():
+                    # Double-check: make sure no stop button is visible
+                    # (if stop button exists, the message WAS sent and the
+                    # send button we see is actually the stop button)
+                    stop_btn = await page.query_selector(STOP_BUTTON_ALL)
+                    if stop_btn and await stop_btn.is_visible():
+                        logger.info(
+                            "Slot %d: stop button visible — message was sent, skipping click",
+                            self._slot_id,
+                        )
+                    else:
+                        await send_btn.click(force=True)
+                        logger.info("Slot %d: used send button fallback", self._slot_id)
+            except Exception:
+                pass
+        else:
+            logger.debug("Slot %d: editor empty — message sent via Enter", self._slot_id)
 
         # Wait for response and extract via clipboard
         return await extract_response_via_clipboard(

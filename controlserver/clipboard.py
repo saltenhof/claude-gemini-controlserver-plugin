@@ -96,6 +96,30 @@ async def extract_response_via_clipboard(
     # Extra settle time for DOM to stabilize after generation
     await page.wait_for_timeout(1500)
 
+    # --- Phase 2b: Check for stopped/empty generation ---
+    # If the user (or a double-click on the stop button) stopped the response,
+    # the model-response element may be empty or contain a "stopped" indicator.
+    responses = await page.query_selector_all(MODEL_RESPONSE)
+    if responses:
+        last_response = responses[-1]
+        preview = ""
+        try:
+            preview = (await last_response.inner_text()).strip()
+        except Exception:
+            pass
+        # Gemini shows "Du hast diese Antwort angehalten" or similar when stopped
+        stopped_indicators = [
+            "antwort angehalten",
+            "response stopped",
+            "you stopped this response",
+        ]
+        if any(indicator in preview.lower() for indicator in stopped_indicators):
+            logger.error("Gemini response was stopped: '%s'", preview[:100])
+            raise RuntimeError("Gemini response was stopped before completion")
+        if not preview:
+            logger.error("Gemini response element is empty")
+            raise RuntimeError("Gemini response is empty — message may not have been sent")
+
     # --- Phase 3: Copy sequence (WITH lock, ~2s) ---
     async with _clipboard_lock:
         return await _copy_response(page)
