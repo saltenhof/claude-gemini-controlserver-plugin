@@ -13,7 +13,6 @@ import logging
 import os
 import signal
 import sys
-import tempfile
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -52,14 +51,12 @@ class SendRequest(BaseModel):
     """Request body for POST /api/session/{slot_id}/send.
 
     File handling:
-      - merge_paths: List of text file paths to concatenate into ONE file
-        before uploading. No limit on count. All are read as UTF-8 text,
-        concatenated with filename headers, and sent as a single merged file.
-      - file_paths: List of file paths to upload individually (images,
-        PDFs, etc.). Maximum 10 files.
-
-    The total files uploaded to Gemini = 1 merged (if merge_paths given)
-    + len(file_paths) individual files.
+      - merge_paths: Text file paths whose contents are merged and embedded
+        directly into the message text. No limit on count. The files are
+        read as UTF-8 text and prepended to the message with filename headers.
+        NOT uploaded as files — content goes into the prompt.
+      - file_paths: Binary files uploaded individually via browser (images,
+        PDFs, etc.). Maximum 9 per call.
     """
 
     message: str
@@ -67,21 +64,15 @@ class SendRequest(BaseModel):
     file_paths: list[str] = []
 
     @model_validator(mode="after")
-    def validate_total_upload_limit(self) -> "SendRequest":
-        """Enforce max 9 total file uploads to Gemini per turn.
+    def validate_upload_limit(self) -> "SendRequest":
+        """Enforce max 9 binary file uploads per turn.
 
-        merge_paths (if non-empty) produce exactly 1 upload.
-        file_paths are uploaded individually.
-        Total = (1 if merge_paths else 0) + len(file_paths) <= 9.
+        merge_paths are embedded in the message (no upload limit).
+        file_paths are uploaded individually (max 9).
         """
-        merged_count = 1 if self.merge_paths else 0
-        total_uploads = merged_count + len(self.file_paths)
-        max_individual = 9 - merged_count
-        if total_uploads > 9:
+        if len(self.file_paths) > 9:
             raise ValueError(
-                f"Maximum 9 total uploads to Gemini per turn. "
-                f"merge_paths produce {merged_count} file, "
-                f"so max {max_individual} individual file_paths allowed "
+                f"Maximum 9 file uploads per turn "
                 f"(got {len(self.file_paths)})"
             )
         return self
@@ -334,12 +325,9 @@ async def send_message(
     Blocks until Gemini responds (up to configured timeout).
 
     File handling:
-      - merge_paths are concatenated into a single temp file
-      - file_paths are uploaded individually
-      - Both lists are optional and can be combined
+      - merge_paths: text files are read, merged, and embedded in the message
+      - file_paths: binary files are uploaded individually via browser
     """
-    merged_temp_path: str | None = None
-
     try:
         # Validate all file paths exist
         all_paths = body.merge_paths + body.file_paths
@@ -350,22 +338,20 @@ async def send_message(
                     detail=f"File not found: {file_path}",
                 )
 
-        # Build the list of files to upload
-        upload_paths: list[str] = []
-
-        # Merge text files into one temp file if merge_paths given
+        # Build the final message: merge text files into the prompt
+        message = body.message
         if body.merge_paths:
-            merged_temp_path = _merge_text_files(body.merge_paths)
-            upload_paths.append(merged_temp_path)
+            merged_content = _merge_text_content(body.merge_paths)
+            message = f"{merged_content}\n\n{body.message}"
 
-        # Add individual files
-        upload_paths.extend(body.file_paths)
+        # Binary files are uploaded individually via browser
+        upload_paths = body.file_paths if body.file_paths else None
 
         response_text, response_format, duration_ms = await pool.send(
             slot_id,
             x_lease_token,
-            body.message,
-            upload_paths if upload_paths else None,
+            message,
+            upload_paths,
         )
         return {
             "response": response_text,
@@ -381,13 +367,6 @@ async def send_message(
     except Exception as exc:
         logger.error("Send failed on slot %d: %s", slot_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Browser error: {exc}")
-    finally:
-        # Clean up temp merged file
-        if merged_temp_path:
-            try:
-                Path(merged_temp_path).unlink(missing_ok=True)
-            except Exception:
-                pass
 
 
 @app.post("/api/session/{slot_id}/release")
@@ -488,18 +467,17 @@ async def test_ui():
 # File merge helper
 # ---------------------------------------------------------------------------
 
-def _merge_text_files(paths: list[str]) -> str:
-    """Read and concatenate text files into a single temp file.
+def _merge_text_content(paths: list[str]) -> str:
+    """Read and concatenate text files into a single string.
 
     Each file's content is preceded by a header line with the filename.
-    The temp file is written as UTF-8 markdown and must be cleaned up
-    by the caller.
+    The result is embedded directly into the message sent to Gemini.
 
     Args:
         paths: List of absolute file paths to merge.
 
     Returns:
-        Absolute path to the merged temp file.
+        Merged text content with file headers.
 
     Raises:
         HTTPException: If a file cannot be read.
@@ -526,17 +504,8 @@ def _merge_text_files(paths: list[str]) -> str:
         parts.append(f"=== {path_obj.name} ===\n{content}")
 
     merged_content = "\n\n".join(parts)
-
-    fd, temp_path = tempfile.mkstemp(suffix=".md", prefix="merged_")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(merged_content)
-    except Exception:
-        os.close(fd)
-        raise
-
-    logger.info("Merged %d files into %s (%d chars)", len(paths), temp_path, len(merged_content))
-    return temp_path
+    logger.info("Merged %d files into message (%d chars)", len(paths), len(merged_content))
+    return merged_content
 
 
 # ---------------------------------------------------------------------------

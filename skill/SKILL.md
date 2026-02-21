@@ -41,13 +41,17 @@ Zerlege `$ARGUMENTS` in:
    - Beispiel: `--file T:\codebase\project\concept.md`
 
 3. **`--files <path1>,<path2>,...`** (optional):
-   - Mehrere Textdateien die zusammengefuegt (gemergt) als EIN Upload gesendet werden
+   - Textdateien (.java, .py, .md, .txt, .ts, .js, .yaml, .json etc.)
+   - Inhalt wird serverseitig zusammengefuegt und in den Prompt eingebettet (kein Upload)
+   - IMMER alle Textdateien auf einmal angeben, NIEMALS in Batches aufteilen
+   - Kein Limit auf Dateianzahl (nur Gemini-Zeichenlimit beachten)
    - Kommasepariert, absolute Pfade
-   - Beispiel: `--files T:\docs\kap1.md,T:\docs\kap2.md,T:\docs\kap3.md`
+   - Beispiel: `--files T:\src\A.java,T:\src\B.java,...,T:\src\L.java`
 
 4. **`--images <path1>,<path2>,...`** (optional):
-   - Dateien die einzeln an Gemini gesendet werden (Bilder, PDFs, etc.)
-   - Kommasepariert, absolute Pfade, max 9 (bzw. 8 wenn auch --files angegeben)
+   - Binaerdateien (.jpg, .png, .gif, .pdf, .xlsx etc.) — werden einzeln per Browser hochgeladen
+   - Max 9 pro Send-Call. Bei >9: automatisch auf mehrere Sends aufgeteilt
+   - Kommasepariert, absolute Pfade
    - Beispiel: `--images T:\screenshots\ui.png,T:\docs\spec.pdf`
 
 5. **`--continue`** (optional):
@@ -95,8 +99,8 @@ Zerlege `$ARGUMENTS` in:
      ```
 
 2. **Datei-Listen vorbereiten**:
-   - `merge_paths`: Liste aus `--files` (oder leer)
-   - `file_paths`: Liste aus `--images` (oder leer)
+   - `merge_paths`: Liste aus `--files` (oder leer) — Textdateien, werden in Prompt eingebettet
+   - `file_paths`: Liste aus `--images` (oder leer) — Binaerdateien, werden per Browser hochgeladen
 
 3. **Laengencheck**: Falls Prompt + eingebetteter Dateiinhalt > 50.000 Zeichen:
    - Nutzer warnen und Bestaetigung einholen.
@@ -119,11 +123,13 @@ Zerlege `$ARGUMENTS` in:
 ### Phase 4: An Gemini senden
 
 1. Rufe `gemini_send` auf mit:
-   - `slot_id`: Der gemerkter Slot-ID
+   - `slot_id`: Der gemerkte Slot-ID
    - `token`: Das gemerkte Lease-Token
    - `message`: Der zusammengebaute Prompt aus Phase 2
-   - `merge_paths`: Die Textdatei-Liste aus Phase 2 (oder weglassen)
-   - `file_paths`: Die Einzeldatei-Liste aus Phase 2 (oder weglassen)
+   - `merge_paths`: ALLE Textdatei-Pfade aus Phase 2 auf einmal (oder weglassen).
+     Inhalt wird serverseitig gemergt und in den Prompt eingebettet.
+   - `file_paths`: Binaerdateien aus Phase 2, max 9 pro Call (oder weglassen).
+     Bei >9: mehrere Sends mit je max 9 file_paths.
 
 2. **Bei Erfolg**: Weiter zu Phase 5.
 
@@ -200,13 +206,15 @@ Gemini hat pro Konversation (= pro Slot-Acquire) zwei harte Limits:
 
 ### Dateigroessen-Limit: Max 700 KB kumuliert pro Kontext
 
-- Zaehle die Gesamtgroesse aller Dateien die innerhalb eines Acquires
-  hochgeladen werden (merge_paths + file_paths + --file Inhalt).
+- Zaehle die Gesamtgroesse aller Dateiinhalte die innerhalb eines Acquires
+  gesendet werden (merge_paths-Inhalt im Prompt + file_paths-Uploads + --file Inhalt).
+- merge_paths-Dateien werden in den Prompt eingebettet — ihr Textinhalt zaehlt
+  gegen das Zeichenlimit von Gemini UND gegen das kumulative 700-KB-Limit.
 - Das Limit ist **kumulativ ueber alle Sends** innerhalb eines Kontexts:
-  - Send 1: 200 KB Datei → verbraucht: 200 KB, Rest: 500 KB
-  - Send 2: 200 KB Datei → verbraucht: 400 KB, Rest: 300 KB
-  - Send 3: 200 KB Datei → verbraucht: 600 KB, Rest: 100 KB
-  - Send 4 mit 200 KB Datei: STOP → erst Release + neues Acquire noetig
+  - Send 1: 200 KB merge_paths → verbraucht: 200 KB, Rest: 500 KB
+  - Send 2: 200 KB Bilder → verbraucht: 400 KB, Rest: 300 KB
+  - Send 3: 200 KB merge_paths → verbraucht: 600 KB, Rest: 100 KB
+  - Send 4 mit 200 KB: STOP → erst Release + neues Acquire noetig
 - Sends OHNE Dateien zaehlen nicht gegen das Datei-Limit.
 - Vor jedem Send mit Dateien: Dateigroessen pruefen (via Bash: `wc -c < datei`
   oder Read + Zeichenzaehlung). Summe der neuen Dateien + bisheriger Verbrauch

@@ -1,12 +1,17 @@
-"""Clipboard-based response extraction with global async lock.
+"""Clipboard-based response extraction with two-level locking.
 
-The OS clipboard is a shared resource. When multiple slots try to copy
-Gemini responses simultaneously, results get mixed up. This module
-wraps the copy-button click + clipboard read sequence in an asyncio.Lock
-so only one slot at a time touches the clipboard.
+The OS clipboard is a shared resource — system-wide, not per-process.
+Two levels of protection:
+
+1. asyncio.Lock — fast, intra-process (Gemini Slot 0 vs Slot 1 vs Slot 2)
+2. File Lock    — cross-process (Gemini Server vs ChatGPT Server)
+
+Both servers use the same lock file (~/.clipboard-lock). The file lock
+uses OS-level kernel locks (msvcrt.locking on Windows) which are
+automatically released when the process dies — no stale locks possible.
 
 The WAIT phase (polling for Gemini to finish generating) happens
-OUTSIDE the lock — only the short copy sequence (~2s) is locked.
+OUTSIDE the locks — only the short copy sequence (~2s) is locked.
 
 Gemini-specific notes:
   - Response elements are <model-response> custom elements
@@ -17,6 +22,9 @@ Gemini-specific notes:
 
 import asyncio
 import logging
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pyperclip
 
@@ -29,8 +37,56 @@ from gemini_selectors import (
 
 logger = logging.getLogger(__name__)
 
-# Module-level lock — shared across all slots in the same process
+# --- Locking ---
+# Level 1: intra-process (fast, no thread overhead)
 _clipboard_lock = asyncio.Lock()
+
+# Level 2: cross-process file lock (Gemini server vs ChatGPT server)
+# Both servers use the same lock file. OS releases the lock automatically
+# if the process crashes — no deadlock possible.
+_CLIPBOARD_LOCK_FILE = Path.home() / ".clipboard-lock"
+
+if sys.platform == "win32":
+    import msvcrt
+
+    @asynccontextmanager
+    async def _cross_process_clipboard_lock():
+        """Acquire a cross-process file lock for clipboard access.
+
+        Uses msvcrt.locking (Windows LockFileEx) — kernel-level lock
+        that is auto-released on process exit/crash.
+        Runs the blocking lock call in a thread to not block the event loop.
+        """
+        fh = open(_CLIPBOARD_LOCK_FILE, "w")
+        try:
+            await asyncio.to_thread(msvcrt.locking, fh.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+        finally:
+            fh.close()
+else:
+    import fcntl
+
+    @asynccontextmanager
+    async def _cross_process_clipboard_lock():
+        """Acquire a cross-process file lock for clipboard access (Unix)."""
+        fh = open(_CLIPBOARD_LOCK_FILE, "w")
+        try:
+            await asyncio.to_thread(fcntl.flock, fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+        finally:
+            fh.close()
 
 # Timeouts
 RESPONSE_POLL_INTERVAL_MS = 1000
@@ -120,9 +176,12 @@ async def extract_response_via_clipboard(
             logger.error("Gemini response element is empty")
             raise RuntimeError("Gemini response is empty — message may not have been sent")
 
-    # --- Phase 3: Copy sequence (WITH lock, ~2s) ---
+    # --- Phase 3: Copy sequence (WITH locks, ~2s) ---
+    # Level 1: intra-process (fast, avoids thread-pool overhead for common case)
+    # Level 2: cross-process file lock (Gemini vs ChatGPT server)
     async with _clipboard_lock:
-        return await _copy_response(page)
+        async with _cross_process_clipboard_lock():
+            return await _copy_response(page)
 
 
 async def _copy_response(page) -> tuple[str, str]:

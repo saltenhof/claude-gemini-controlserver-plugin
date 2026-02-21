@@ -111,16 +111,18 @@ SELECTORS = {
         'button[aria-label="Kopieren"]',
         'button[aria-label="Copy"]',
     ],
-    # File upload — Gemini has NO direct <input type="file">.
-    # Instead there's a button that opens an upload menu.
-    # After clicking the upload button, a hidden file input may appear.
-    "upload_button": [
-        'button[aria-label="Menü „Datei hochladen" öffnen"]',
-        "button.upload-card-button",
-        'button[aria-label="Upload file menu"]',
+    # File upload — two-step process:
+    # Step 1: Click the "add" button at the bottom to open the flyout menu.
+    "add_button": [
+        'button.add-button',
+        'button[data-test-id="add-button"]',
+        'button[aria-label="Weitere Optionen"]',
+        'button[aria-label="More options"]',
     ],
-    "file_input": [
-        'input[type="file"]',
+    # Step 2: In the flyout, click the local file uploader to trigger file dialog.
+    "file_upload_button": [
+        '[data-test-id="local-images-files-uploader-button"]',
+        'button[data-test-id="local-images-files-uploader-button"]',
     ],
     # Model selector button (shows current model: "Pro", "Flash", etc.)
     "model_selector": [

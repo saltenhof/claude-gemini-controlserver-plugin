@@ -60,12 +60,22 @@ Verwende eindeutige, sprechende Owner-Namen:
 - Sub-Agents: "sub-<aufgabe>" (z.B. "sub-review", "sub-translate")
 - Wichtig: Gleicher Owner = Reattach (bekommst bestehenden Slot zurueck)
 
-### Datei-Handling
+### Datei-Handling — ZWEI getrennte Strategien
 
-- merge_paths=["datei1.md", "datei2.md"]: Werden zu EINER Datei zusammengefasst
-  und als ein Upload gesendet. Fuer Textdateien, Code, Konzepte.
-- file_paths=["bild.png", "doc.pdf"]: Jede Datei einzeln hochgeladen.
-  Max 9 pro Turn (bzw. 8 wenn auch merge_paths angegeben). Fuer Bilder, PDFs.
+**merge_paths** — fuer Textdateien (.java, .py, .md, .txt, .ts, .js, .yaml, .json etc.):
+- Inhalt wird serverseitig zusammengefuegt und direkt in den Prompt eingebettet.
+- KEIN File-Upload — der Text erscheint als Teil der Nachricht.
+- KEIN Limit auf Dateianzahl (nur Gemini-Zeichenlimit beachten).
+- IMMER alle Textdateien in EINEM einzigen gemini_send-Call schicken.
+- NIEMALS Textdateien auf mehrere Sends aufteilen.
+- Beispiel: 12 Java-Dateien reviewen → alle 12 Pfade in merge_paths, ein Send.
+
+**file_paths** — fuer Binaerdateien (.jpg, .png, .gif, .pdf, .xlsx etc.):
+- Werden einzeln per Browser an Gemini hochgeladen.
+- Max 9 pro Send-Call.
+- Bei >9 Binaerdateien: auf mehrere Sends aufteilen (je max 9).
+- Beispiel: 15 Bilder fuer OCR → Send 1 mit 9 Bildern, Send 2 mit 6 Bildern.
+
 - Alle Pfade muessen absolute Pfade auf dem lokalen Rechner sein.
 
 ### Fehlerbehandlung
@@ -223,18 +233,20 @@ async def gemini_send(
 
     Blocks until Gemini responds (up to ~40 min for long generations).
 
-    File handling:
-    - merge_paths: Text files concatenated into ONE upload (unlimited count).
-      Use for source code, docs, concepts that should be reviewed together.
-    - file_paths: Files uploaded individually (max 8 if merge_paths given,
-      else max 9 per turn). Use for images, PDFs, binary files.
+    File handling — two separate strategies:
+    - merge_paths: Text files (.java, .py, .md, .txt, .ts, .json etc.)
+      Content is merged server-side and embedded directly in the prompt.
+      No upload, no file count limit. Send ALL text files in ONE call.
+    - file_paths: Binary files (.jpg, .png, .pdf, .xlsx etc.)
+      Uploaded individually via browser. Max 9 per call.
+      For >9 files, split across multiple sends.
 
     Args:
         slot_id: The slot ID from gemini_acquire.
         token: The lease token from gemini_acquire.
         message: The message/prompt to send to Gemini.
-        merge_paths: Optional list of text file paths to merge into one upload.
-        file_paths: Optional list of file paths to upload individually.
+        merge_paths: Text file paths to merge into the message (unlimited).
+        file_paths: Binary file paths to upload individually (max 9).
     """
     body = {"message": message}
     if merge_paths:

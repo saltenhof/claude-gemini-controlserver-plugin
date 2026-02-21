@@ -313,51 +313,35 @@ class Slot:
     # --- Internal helpers ---
 
     async def _upload_files(self, page: Page, file_paths: list[str]) -> None:
-        """Attach one or more files via the upload menu.
+        """Attach one or more files via the two-step upload flow.
 
-        Gemini does NOT have a direct <input type="file"> visible at all times.
-        Instead, there is a button that opens an upload menu. However, when
-        the upload menu is triggered, a hidden <input type="file"> may be
-        injected into the DOM. We use Playwright's file chooser event to
-        handle the upload.
+        Gemini's upload is two steps:
+          1. Click the "add" button at the bottom → flyout menu opens
+          2. Click "local-images-files-uploader-button" → OS file dialog
+
+        Playwright intercepts the file dialog and sets files programmatically.
 
         Args:
             page: The Playwright page.
             file_paths: List of absolute file paths to upload.
         """
-        # Try direct file input first (may exist even if not visible)
-        file_input = await page.query_selector('input[type="file"]')
-        if file_input:
-            await file_input.set_input_files(file_paths)
-            await self._wait_for_upload_complete(page)
-            logger.info(
-                "Slot %d: attached %d file(s) via direct input: %s",
-                self._slot_id, len(file_paths),
-                ", ".join(Path(p).name for p in file_paths),
-            )
-            return
+        # Step 1: Click the add button to open the flyout menu
+        add_btn = await find_element(page, "add_button")
+        await add_btn.click()
+        await page.wait_for_timeout(500)
 
-        # No direct file input — use the upload button + file chooser event
-        upload_btn = await page.query_selector(
-            'button.upload-card-button, '
-            'button[aria-label*="Datei hochladen"], '
-            'button[aria-label*="Upload file"]'
-        )
-        if not upload_btn:
-            raise RuntimeError(
-                f"Slot {self._slot_id}: no upload button or file input found"
-            )
+        # Step 2: Click the file upload button in the flyout.
+        # expect_file_chooser intercepts the OS dialog before it appears.
+        file_upload_btn = await find_element(page, "file_upload_button")
 
-        # Listen for the file chooser dialog, click the upload button, then
-        # set the files on the chooser
         async with page.expect_file_chooser() as fc_info:
-            await upload_btn.click()
+            await file_upload_btn.click()
         file_chooser = await fc_info.value
         await file_chooser.set_files(file_paths)
 
         await self._wait_for_upload_complete(page)
         logger.info(
-            "Slot %d: attached %d file(s) via file chooser: %s",
+            "Slot %d: attached %d file(s): %s",
             self._slot_id, len(file_paths),
             ", ".join(Path(p).name for p in file_paths),
         )
