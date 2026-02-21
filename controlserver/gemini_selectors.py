@@ -94,8 +94,11 @@ SELECTORS = {
         'button[aria-label="Send message"]',
     ],
     # Stop/cancel button during generation.
-    # Gemini may not always show a stop button; use aria-busy as primary signal.
+    # Most reliable: mat-icon with data-mat-icon-name="stop" inside a button.
+    # aria-label varies by language, so we prefer the icon attribute.
     "stop_button": [
+        '[data-mat-icon-name="stop"]',
+        'button:has([data-mat-icon-name="stop"])',
         'button[aria-label="Stop generating"]',
         'button[aria-label="Generierung stoppen"]',
         'button[aria-label="Antwort stoppen"]',
