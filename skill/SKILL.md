@@ -67,7 +67,7 @@ Zerlege `$ARGUMENTS` in:
 2. **Bei Erfolg** ("ok"): Weiter zu Phase 1.
 3. **Bei Fehler**:
    - Dem Nutzer mitteilen: **"Der Gemini Pool Service ist nicht erreichbar."**
-   - Hinweis: `start.cmd` in `T:\codebase\claude-gemini-controlserver-plugin` ausfuehren.
+   - Hinweis: `start.cmd` in `~/.gemini-session-pool/controlserver/` ausfuehren.
    - **STOP**.
 
 ### Phase 1: Argumente parsen und validieren

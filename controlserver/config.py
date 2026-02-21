@@ -59,7 +59,7 @@ class HealthConfig:
 class LoggingConfig:
     """Logging configuration."""
 
-    dir: str = "./logs"
+    dir: str = "~/.gemini-session-pool/logs"
     level: str = "INFO"
     error_level: str = "DEBUG"
     max_file_size_mb: int = 50

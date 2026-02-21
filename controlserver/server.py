@@ -92,7 +92,7 @@ class SendRequest(BaseModel):
 
 def _setup_logging(app_config: AppConfig) -> None:
     """Configure logging with rotating file handler and stderr output."""
-    log_dir = Path(app_config.logging.dir)
+    log_dir = Path(os.path.expanduser(app_config.logging.dir))
     log_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = log_dir / "session-pool.log"

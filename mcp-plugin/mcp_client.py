@@ -6,8 +6,9 @@ REST API (localhost:9200). No Playwright, no browser, no state.
 Can run in multiple Claude Code instances simultaneously — each instance
 gets its own MCP server process, all sharing the same pool service.
 
-Usage:
-    claude mcp add gemini-pool -- python T:/codebase/claude-gemini-controlserver-plugin/mcp_client.py
+Usage (after install.py):
+    Automatically registered in ~/.claude.json by install.py.
+    Manual: claude mcp add gemini-pool -- python ~/.gemini-session-pool/mcp-plugin/mcp_client.py
 """
 
 import os
@@ -114,8 +115,8 @@ async def _pool_request(
     except httpx.ConnectError:
         return (
             "Pool Service nicht erreichbar. "
-            "Bitte starten: python server.py (oder start.cmd) "
-            f"in T:/codebase/claude-gemini-controlserver-plugin"
+            "Bitte starten: start.cmd "
+            "in ~/.gemini-session-pool/controlserver/"
         )
     except httpx.TimeoutException:
         return "Timeout bei Anfrage an Pool Service."

@@ -24,7 +24,7 @@ health:
   inactivity_check_interval_s: 30  # Inactivity timeout check interval
 
 logging:
-  dir: "./logs"
+  dir: "~/.gemini-session-pool/logs"
   level: "INFO"                    # Normal operation
   error_level: "DEBUG"             # Error cases
   max_file_size_mb: 50
