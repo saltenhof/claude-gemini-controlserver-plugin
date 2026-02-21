@@ -320,6 +320,20 @@ async def gemini_pool_reset() -> str:
     return f"Pool reset. {data.get('slots_available', '?')} slots available."
 
 
+@mcp.tool()
+async def gemini_shutdown() -> str:
+    """Graceful shutdown of the Gemini pool service.
+
+    Releases all slots, closes Chrome cleanly, and stops the server.
+    Use this instead of killing the process manually.
+    After shutdown, the server must be restarted manually or via auto-start.
+    """
+    data = await _pool_request("POST", "/api/shutdown", timeout=30.0)
+    if isinstance(data, str):
+        return data
+    return "Gemini pool service is shutting down gracefully."
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------

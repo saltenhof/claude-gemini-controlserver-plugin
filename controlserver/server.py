@@ -11,6 +11,7 @@ Usage:
 import asyncio
 import logging
 import os
+import signal
 import sys
 import tempfile
 from contextlib import asynccontextmanager
@@ -451,6 +452,27 @@ async def slot_reset(slot_id: int):
 async def health():
     """Lightweight liveness probe."""
     return "ok"
+
+
+@app.post("/api/shutdown")
+async def graceful_shutdown():
+    """Graceful shutdown: release all slots, close Chrome, stop server.
+
+    Sends the HTTP response first, then initiates shutdown after a short
+    delay so the caller receives the confirmation.
+    """
+    logger.info("Graceful shutdown requested via REST API.")
+    asyncio.create_task(_do_graceful_shutdown())
+    return {"shutdown": "initiated", "message": "Server shutting down gracefully..."}
+
+
+async def _do_graceful_shutdown() -> None:
+    """Background task: wait for response to be sent, then stop the process."""
+    await asyncio.sleep(0.5)
+    logger.info("Sending SIGINT to self (PID %d) for clean uvicorn shutdown...", os.getpid())
+    # SIGINT triggers uvicorn's graceful shutdown, which runs the lifespan
+    # cleanup (stop monitors, close browser, release slots).
+    os.kill(os.getpid(), signal.SIGINT)
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -459,13 +459,17 @@ class PoolBrowser:
             return
 
         try:
-            # Find the model selector button
-            model_btn = await page.query_selector(
-                'button[data-test-id="bard-mode-menu-button"], '
-                'button[aria-label="Modusauswahl öffnen"]'
-            )
+            # Wait for the model selector button (may take a moment after Gem navigation)
+            try:
+                model_btn = await page.wait_for_selector(
+                    'button[data-test-id="bard-mode-menu-button"], '
+                    'button[aria-label="Modusauswahl öffnen"]',
+                    timeout=10_000,
+                )
+            except Exception:
+                model_btn = None
             if not model_btn:
-                logger.debug("Model selector button not found, skipping model switch.")
+                logger.warning("Model selector button not found after 10s, skipping model switch.")
                 return
 
             # Read current model from button text
